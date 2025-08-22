@@ -203,15 +203,27 @@ export default function EventsRotator() {
   const [error, setError] = useState("");
 
 const feedUrls = useMemo(() => {
-  // turn https://sundevilcentral.eoss.asu.edu/<path> into /ics-proxy/<path>
-  const toProxyPath = (u) => {
+  // If the feed has a query (?uid=...), use our Netlify function (/ics-proxy/*).
+  // For plain .ics files, use the external read-only proxy (works reliably).
+  const mapOne = (u) => {
     if (!u) return "";
     const https = u.replace(/^webcal:/i, "https:");
-    const cleanPath = https.replace(/^https?:\/\/sundevilcentral\.eoss\.asu\.edu/i, "");
-    return `/ics-proxy${cleanPath}`;
+    const hasQuery = /\?/.test(https);
+
+    if (hasQuery) {
+      // route through Netlify function
+      const cleanPath = https.replace(/^https?:\/\/sundevilcentral\.eoss\.asu\.edu/i, "");
+      return `/ics-proxy${cleanPath}`;
+    } else {
+      // route through external read-only proxy
+      const clean = https.replace(/^https?:\/\//, "");
+      return `https://r.jina.ai/http/${clean}`;
+    }
   };
-  return (ICS_FEED_URLS || []).filter(Boolean).map(toProxyPath);
+
+  return (ICS_FEED_URLS || []).filter(Boolean).map(mapOne);
 }, []);
+
 
 
 
