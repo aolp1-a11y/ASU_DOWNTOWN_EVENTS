@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
+const [feedStatus, setFeedStatus] = useState({ ok: [], fail: [] });
+
 import { QRCodeCanvas } from "qrcode.react";
 
 
@@ -256,7 +258,7 @@ useEffect(() => {
       const looksLikeICS = (t) =>
         typeof t === "string" && (t.startsWith("BEGIN:VCALENDAR") || t.includes("\nBEGIN:VEVENT"));
 
-      // Try candidates in order for each feed, log what worked
+      // Try up to 3 paths for each original feed: Netlify function → external → direct
       const fetchOne = async ({ id, candidates }) => {
         for (const url of candidates) {
           try {
@@ -265,7 +267,7 @@ useEffect(() => {
             const text = await res.text();
             if (looksLikeICS(text)) {
               console.log("FEED OK", id, url);
-              return { id, text };
+              return { id, text, okUrl: url };
             } else {
               console.warn("FEED NON-ICS", id, url);
             }
@@ -273,22 +275,29 @@ useEffect(() => {
             console.warn("FEED ERROR", id, url, e);
           }
         }
-        return { id, text: "" };
+        return { id, text: "", okUrl: "" };
       };
 
       const results = await Promise.all(feedUrls.map(fetchOne));
       const good = results.filter(r => r.text && r.text.trim().length > 0);
+      const okIds = good.map(g => g.id);
+      const failIds = feedUrls.map(f => f.id).filter(id => !okIds.includes(id));
+
+      setFeedStatus({ ok: okIds, fail: failIds });
 
       if (!good.length) { setError("No feeds loaded"); setRawICS([]); return; }
 
-      setRawICS(good); // [{id, text}]
+      // Keep [{id, text}] so the parser can tag sourceId
+      setRawICS(good);
     } catch (e) {
       setError(String(e));
       setRawICS([]);
+      setFeedStatus({ ok: [], fail: feedUrls.map(f => f.id) });
     }
   }
   loadAll();
 }, [feedUrls]);
+
 
 
 
