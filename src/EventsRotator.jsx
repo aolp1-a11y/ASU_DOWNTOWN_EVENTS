@@ -222,21 +222,45 @@ useEffect(() => {
       setError("");
       if (!feedUrls?.length) { setError("No feed URLs configured"); return; }
 
-      const texts = await Promise.all(
-        feedUrls.map(async (url) => {
+      // Helper: check if a response looks like ICS
+      const looksLikeICS = (t) => typeof t === "string" && (t.startsWith("BEGIN:VCALENDAR") || t.includes("\nBEGIN:VEVENT"));
+
+      // Build alt endpoints for each original URL
+      const toExternalProxy = (u) => {
+        const https = u.replace(/^webcal:/i, "https:");
+        const clean = https.replace(/^https?:\/\//, "");
+        return `https://r.jina.ai/http/${clean}`;
+      };
+      const toDirect = (u) => {
+        const https = u.replace(/^webcal:/i, "https:");
+        return https;
+      };
+
+      // Try in order: Netlify function path (feedUrls) → external proxy → direct
+      const allCandidatesPerUrl = (orig) => [
+        // function path is already in feedUrls item (e.g., /ics-proxy/ical/...)
+        orig,
+        toExternalProxy(orig.replace(/^\/ics-proxy\//, "https://sundevilcentral.eoss.asu.edu/")),
+        toDirect(orig.replace(/^\/ics-proxy\//, "https://sundevilcentral.eoss.asu.edu/")),
+      ];
+
+      const fetchOne = async (origFuncPath) => {
+        const candidates = allCandidatesPerUrl(origFuncPath);
+        for (const url of candidates) {
           try {
             const res = await fetch(url);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return await res.text();
-          } catch (e) {
-            console.warn("Fetch failed:", url, e);
-            return "";
-          }
-        })
-      );
+            if (!res.ok) continue;
+            const text = await res.text();
+            if (looksLikeICS(text)) return text;
+          } catch (_) { /* try next */ }
+        }
+        return ""; // all attempts failed
+      };
 
-      const nonEmpty = texts.filter(t => typeof t === "string" && t.trim().length > 0);
+      const texts = await Promise.all(feedUrls.map(fetchOne));
+      const nonEmpty = texts.filter(t => typeof t === "string" && t.trim());
       if (nonEmpty.length === 0) { setError("No feeds loaded"); return; }
+
       setRawICS(nonEmpty);
     } catch (e) {
       setError(String(e));
@@ -245,6 +269,7 @@ useEffect(() => {
   }
   loadAll();
 }, [feedUrls]);
+
 
 
 
