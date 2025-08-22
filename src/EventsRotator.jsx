@@ -5,6 +5,8 @@ const [feedStatus, setFeedStatus] = useState({ ok: [], fail: [] });
 import { QRCodeCanvas } from "qrcode.react";
 
 
+
+
 // === HOW TO USE ===
 // 1) Replace ICS_FEED_URL with an ICS link from Sun Devil Central filtered to Downtown Phoenix Campus.
 //    Tip: If the feed doesn't allow CORS from your host, set USE_CORS_PROXY=true to route via a public read-only proxy.
@@ -198,7 +200,14 @@ function useInterval(callback, delay) {
 }
 
 export default function EventsRotator() {
+  const [sourceCounts, setSourceCounts] = useState({});
   const [rawICS, setRawICS] = useState("");
+  const counts = {};
+for (const e of deduped) {
+  counts[e.sourceId] = (counts[e.sourceId] || 0) + 1;
+}
+setSourceCounts(counts);
+
   const [events, setEvents] = useState([]);
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(true);
@@ -332,7 +341,8 @@ useEffect(() => {
   const seen = new Set();
   const deduped = [];
   for (const e of flattened) {
-    const key = `${e.uid || e.summary || "noid"}|${+e.start}`;
+    const key = `${e.sourceId}|${e.uid || e.summary || "noid"}|${+e.start}`;
+
     if (!seen.has(key)) { seen.add(key); deduped.push(e); }
   }
 
@@ -357,6 +367,19 @@ useEffect(() => {
     <div className="w-full min-h-[320px] grid place-items-center p-4 bg-white">
       <div className="w-full max-w-3xl rounded-2xl shadow-lg border border-gray-200 p-6 relative overflow-hidden">
         <Header total={events.length} index={idx} playing={playing} onToggle={() => setPlaying((p) => !p)} />
+          {Object.keys(sourceCounts).length > 0 && (
+  <div className="mt-2 text-xs text-gray-700">
+    <div className="font-semibold">Feed contributions:</div>
+    <div className="flex flex-wrap gap-2 mt-1">
+      {Object.entries(sourceCounts).map(([id, n]) => (
+        <span key={id} className="px-2 py-0.5 rounded-full border bg-gray-50">
+          {id}: {n}
+        </span>
+      ))}
+    </div>
+  </div>
+)}
+
         {error && (
           <div className="mt-3 text-sm text-red-600">Error loading feed: {String(error)}</div>
         )}
