@@ -296,40 +296,46 @@ useEffect(() => {
 
 
 
-  useEffect(() => {
-    if (!rawICS) return;
-    const parsed = parseICS(rawICS)
- .map((e) => {
-  const start = parseIcsDate(e.dtstart, e.dtstart_tzid, { isEnd: false });
-  const end = parseIcsDate(e.dtend || e.dtstart, e.dtend_tzid, { isEnd: true });
-  const allDay = /^\d{8}$/.test(e.dtstart) && (!e.dtend || /^\d{8}$/.test(e.dtend));
-  return { ...e, start, end, allDay };
-})
-.filter((e) => e.start && e.end)
+useEffect(() => {
+  if (!rawICS || (Array.isArray(rawICS) && rawICS.length === 0)) return;
 
-  .filter((e) => (e.end || e.start) >= new Date(Date.now() - 1000 * 60 * 60)) // keep if it hasn't ended >1h ago
+  const parsedAll = (Array.isArray(rawICS) ? rawICS : [rawICS]).flatMap(({ id, text }) => {
+    const items = parseICS(text).map((e) => {
+      const start = parseIcsDate(e.dtstart, e.dtstart_tzid, { isEnd: false });
+      const end = parseIcsDate(e.dtend || e.dtstart, e.dtend_tzid, { isEnd: true });
+      const allDay = /^\d{8}$/.test(e.dtstart) && (!e.dtend || /^\d{8}$/.test(e.dtend));
+      return { ...e, start, end, allDay, sourceId: id };
+    });
+    return items;
+  });
 
-// .filter(matchesCampus) // TEMP: keep disabled while verifying volume
+  const valid = parsedAll.filter((e) => e.start && e.end);
+  const timeFiltered = valid.filter((e) => (e.end || e.start) >= new Date(Date.now() - 1000 * 60 * 60));
+  const campusFiltered = timeFiltered; // keep campus filter off while verifying
 
+  const bySource = campusFiltered.reduce((m, e) => ((m[e.sourceId] = m[e.sourceId] || []).push(e), m), {});
+  Object.values(bySource).forEach(arr => arr.sort((a, b) => a.start - b.start));
 
-  .sort((a, b) => a.start - b.start)
-  .slice(0, MAX_EVENTS * 4); // allow more before dedupe
+  // You can keep round-robin or just flatten; to keep *all* events, you can just flatten + sort:
+  const flattened = Object.values(bySource).flat().sort((a, b) => a.start - b.start);
 
-// Deduplicate by UID+start (fallback to summary)
-const seen = new Set();
-const deduped = [];
-for (const e of parsed) {
-  const key = `${e.uid || e.summary || "noid"}|${+e.start}`;
-  if (!seen.has(key)) {
-    seen.add(key);
-    deduped.push(e);
+  // Deduplicate by UID+start
+  const seen = new Set();
+  const deduped = [];
+  for (const e of flattened) {
+    const key = `${e.uid || e.summary || "noid"}|${+e.start}`;
+    if (!seen.has(key)) { seen.add(key); deduped.push(e); }
   }
-}
 
-setEvents(deduped.slice(0, MAX_EVENTS));
+  console.log("Parsed total:", parsedAll.length,
+              "Valid:", valid.length,
+              "After time filter:", timeFiltered.length,
+              "Final:", deduped.length);
 
-    setIdx(0);
-  }, [rawICS]);
+  setEvents(deduped.slice(0, MAX_EVENTS));
+  setIdx(0);
+}, [rawICS]);
+
 
   useInterval(() => {
     if (!playing || events.length <= 1) return;
