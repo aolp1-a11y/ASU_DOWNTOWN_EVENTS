@@ -1,0 +1,12 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+
+# Route /ics-proxy/* to the function
+[[redirects]]
+  from = "/ics-proxy/*"
+  to = "/.netlify/functions/ics-proxy/:splat"
+  status = 200
