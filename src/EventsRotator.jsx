@@ -203,26 +203,45 @@ export default function EventsRotator() {
   const [error, setError] = useState("");
 
 const feedUrls = useMemo(() => {
-  // If the feed has a query (?uid=...), use our Netlify function (/ics-proxy/*).
-  // For plain .ics files, use the external read-only proxy (works reliably).
-  const mapOne = (u) => {
-    if (!u) return "";
+  // Build three routes for EVERY original URL:
+  //  1) Via Netlify function (/ics-proxy/*)
+  //  2) Via external read-only proxy (r.jina.ai)
+  //  3) Direct https://
+  const makeCandidates = (u) => {
+    if (!u) return [];
     const https = u.replace(/^webcal:/i, "https:");
-    const hasQuery = /\?/.test(https);
+    const cleanHostPath = https.replace(/^https?:\/\//, "");
+    const fnPath = https.replace(/^https?:\/\/sundevilcentral\.eoss\.asu\.edu/i, ""); // /ical/... or /ics?...
 
-    if (hasQuery) {
-      // route through Netlify function
-      const cleanPath = https.replace(/^https?:\/\/sundevilcentral\.eoss\.asu\.edu/i, "");
-      return `/ics-proxy${cleanPath}`;
-    } else {
-      // route through external read-only proxy
-      const clean = https.replace(/^https?:\/\//, "");
-      return `https://r.jina.ai/http/${clean}`;
+    const functionUrl  = `/ics-proxy${fnPath}`;
+    const externalUrl  = `https://r.jina.ai/http/${cleanHostPath}`;
+    const directUrl    = https;
+
+    return [functionUrl, externalUrl, directUrl];
+  };
+
+  const sourceIdFor = (u) => {
+    try {
+      const url = new URL(u);
+      const qp = url.searchParams;
+      if (qp.get("eid")) return `eid:${qp.get("eid")}`;
+      if (qp.get("uid")) return `uid:${qp.get("uid")}`;
+      const parts = url.pathname.split("/");
+      const last = parts[parts.length - 1] || "";
+      return last.replace(/\.ics$/i, "") || url.host;
+    } catch {
+      return String(u).slice(-32);
     }
   };
 
-  return (ICS_FEED_URLS || []).filter(Boolean).map(mapOne);
+  return (ICS_FEED_URLS || []).filter(Boolean).map((orig) => ({
+    id: sourceIdFor(orig),
+    candidates: makeCandidates(orig),
+    orig,
+  }));
 }, []);
+
+
 
 
 
@@ -234,46 +253,35 @@ useEffect(() => {
       setError("");
       if (!feedUrls?.length) { setError("No feed URLs configured"); return; }
 
-      // Helper: check if a response looks like ICS
-      const looksLikeICS = (t) => typeof t === "string" && (t.startsWith("BEGIN:VCALENDAR") || t.includes("\nBEGIN:VEVENT"));
+      const looksLikeICS = (t) =>
+        typeof t === "string" && (t.startsWith("BEGIN:VCALENDAR") || t.includes("\nBEGIN:VEVENT"));
 
-      // Build alt endpoints for each original URL
-      const toExternalProxy = (u) => {
-        const https = u.replace(/^webcal:/i, "https:");
-        const clean = https.replace(/^https?:\/\//, "");
-        return `https://r.jina.ai/http/${clean}`;
-      };
-      const toDirect = (u) => {
-        const https = u.replace(/^webcal:/i, "https:");
-        return https;
-      };
-
-      // Try in order: Netlify function path (feedUrls) → external proxy → direct
-      const allCandidatesPerUrl = (orig) => [
-        // function path is already in feedUrls item (e.g., /ics-proxy/ical/...)
-        orig,
-        toExternalProxy(orig.replace(/^\/ics-proxy\//, "https://sundevilcentral.eoss.asu.edu/")),
-        toDirect(orig.replace(/^\/ics-proxy\//, "https://sundevilcentral.eoss.asu.edu/")),
-      ];
-
-      const fetchOne = async (origFuncPath) => {
-        const candidates = allCandidatesPerUrl(origFuncPath);
+      // Try candidates in order for each feed, log what worked
+      const fetchOne = async ({ id, candidates }) => {
         for (const url of candidates) {
           try {
             const res = await fetch(url);
-            if (!res.ok) continue;
+            if (!res.ok) { console.warn("FEED FAIL", id, res.status, url); continue; }
             const text = await res.text();
-            if (looksLikeICS(text)) return text;
-          } catch (_) { /* try next */ }
+            if (looksLikeICS(text)) {
+              console.log("FEED OK", id, url);
+              return { id, text };
+            } else {
+              console.warn("FEED NON-ICS", id, url);
+            }
+          } catch (e) {
+            console.warn("FEED ERROR", id, url, e);
+          }
         }
-        return ""; // all attempts failed
+        return { id, text: "" };
       };
 
-      const texts = await Promise.all(feedUrls.map(fetchOne));
-      const nonEmpty = texts.filter(t => typeof t === "string" && t.trim());
-      if (nonEmpty.length === 0) { setError("No feeds loaded"); return; }
+      const results = await Promise.all(feedUrls.map(fetchOne));
+      const good = results.filter(r => r.text && r.text.trim().length > 0);
 
-      setRawICS(nonEmpty);
+      if (!good.length) { setError("No feeds loaded"); setRawICS([]); return; }
+
+      setRawICS(good); // [{id, text}]
     } catch (e) {
       setError(String(e));
       setRawICS([]);
@@ -281,6 +289,8 @@ useEffect(() => {
   }
   loadAll();
 }, [feedUrls]);
+
+
 
 
 
@@ -299,7 +309,8 @@ useEffect(() => {
 
   .filter((e) => (e.end || e.start) >= new Date(Date.now() - 1000 * 60 * 60)) // keep if it hasn't ended >1h ago
 
- // .filter(matchesCampus) // TEMP: show everything to verify volume
+// .filter(matchesCampus) // TEMP: keep disabled while verifying volume
+
 
   .sort((a, b) => a.start - b.start)
   .slice(0, MAX_EVENTS * 4); // allow more before dedupe
